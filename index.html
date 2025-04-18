@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>StarNet Demo Call</title>
+</head>
+<body>
+  <h1>🎙️ StarNet Demo Call</h1>
+  <button id="start">Inizia a parlare</button>
+  <button id="stop" disabled>Ferma</button>
+  <button id="send" disabled>Invia</button>
+  <p id="status">Pronto</p>
+  <audio id="audio" controls></audio>
+  <script>
+    let mediaRecorder;
+    let audioChunks = [];
+
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const sendBtn = document.getElementById('send');
+    const status = document.getElementById('status');
+    const audioEl = document.getElementById('audio');
+
+    startBtn.onclick = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = event => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioEl.src = URL.createObjectURL(blob);
+        audioEl.load();
+        sendBtn.disabled = false;
+      };
+
+      mediaRecorder.start();
+      status.textContent = "Registrazione in corso...";
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      status.textContent = "Registrazione completata.";
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+
+    sendBtn.onclick = async () => {
+      status.textContent = "Invio in corso...";
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      const formData = new FormData();
+      formData.append('audio', blob, 'recording.webm');
+
+      const response = await fetch('/chat', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await response.json();
+      status.textContent = "Risposta: " + data.reply;
+      audioEl.src = data.audio;
+      audioEl.load();
+      audioEl.play();
+    };
+  </script>
+</body>
+</html>
