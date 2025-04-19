@@ -93,12 +93,18 @@ app.post("/interazione", async (req, res) => {
 
               chatSessions[callSid].push({ role: "user", content: testo });
 
-              const chat = await openai.chat.completions.create({
-                model: "gpt-4",
-                messages: chatSessions[callSid]
-              });
+const chat = await openai.chat.completions.create({
+  model: "gpt-4",
+  messages: [
+    { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." },
+    { role: "user", content: testoUtente }
+  ]
+});
 
-              const rispostaGPT = chat.choices[0].message.content;
+console.log("🧠 Risposta grezza da GPT:", JSON.stringify(chat, null, 2));
+
+const rispostaGPT = chat.choices?.[0]?.message?.content || "Non sono riuscita a rispondere.";
+
               chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
 
               const audio = await openai.audio.speech.create({
