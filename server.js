@@ -11,6 +11,17 @@ const ffmpegPath = require("ffmpeg-static");
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
+
+const uploadsDir = path.join(__dirname, "uploads");
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+  console.log("📂 Cartella 'uploads/' creata");
+} else {
+  console.log("📁 Cartella 'uploads/' già esistente");
+}
+
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
