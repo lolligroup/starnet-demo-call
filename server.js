@@ -101,7 +101,7 @@ app.post("/interazione", async (req, res) => {
               chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
 
               const audio = await openai.audio.speech.create({
-                model: "tts-1",
+                model: "tts-1-hd",
                 voice: "nova",
                 input: rispostaGPT
               });
@@ -181,12 +181,14 @@ app.post("/chat", upload.single("audio"), async (req, res) => {
         });
 
         const rispostaGPT = chat.choices[0]?.message?.content || "Non sono riuscita a rispondere.";
+const testoPulito = rispostaGPT.replace(/[^\w\s.,!?àèéìòù]/gi, "");
 
-        const speech = await openai.audio.speech.create({
-          model: "tts-1",
-          voice: "nova",
-          input: rispostaGPT
-        });
+const speech = await openai.audio.speech.create({
+  model: "tts-1-hd",
+  voice: "nova",
+  input: testoPulito
+});
+
 
         const outputPath = path.join("public", "response.mp3");
         const buffer = Buffer.from(await speech.arrayBuffer());
