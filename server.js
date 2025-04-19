@@ -4,9 +4,11 @@ const https = require("https");
 const path = require("path");
 const { OpenAI } = require("openai");
 const { twiml: { VoiceResponse } } = require("twilio");
+const twilio = require("twilio");
 
 const app = express();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
@@ -39,7 +41,7 @@ app.post("/interazione", async (req, res) => {
     file.on("finish", async () => {
       file.close();
       try {
-        // Trascrivi
+        // Trascrizione
         const transcription = await openai.audio.transcriptions.create({
           file: fs.createReadStream(audioPath),
           model: "whisper-1"
@@ -48,16 +50,16 @@ app.post("/interazione", async (req, res) => {
         const testo = transcription.text.trim();
         console.log(`[${callSid}] 🗣️ Utente:`, testo);
 
-        // Crea o aggiorna la sessione
+        // Crea o aggiorna sessione
         if (!chatSessions[callSid]) {
           chatSessions[callSid] = [
-            { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." }
+            { role: "system", content: "Rispondi come Stella, assistente vocale gentile e premurosa di StarNet." }
           ];
         }
 
         chatSessions[callSid].push({ role: "user", content: testo });
 
-        // GPT
+        // GPT-4
         const chat = await openai.chat.completions.create({
           model: "gpt-4",
           messages: chatSessions[callSid]
@@ -78,7 +80,7 @@ app.post("/interazione", async (req, res) => {
         const buffer = Buffer.from(await audio.arrayBuffer());
         fs.writeFileSync(rispostaPath, buffer);
 
-        // Risposta Twilio + nuovo record (loop)
+        // Play + nuovo record (loop)
         const twiml = new VoiceResponse();
         twiml.play(`https://${req.headers.host}/${callSid}_risposta.mp3`);
         twiml.record({
@@ -93,12 +95,31 @@ app.post("/interazione", async (req, res) => {
       } catch (err) {
         console.error("❌ Errore:", err.message);
         const twiml = new VoiceResponse();
-        twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore. A presto!");
+        twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore. Alla prossima!");
         twiml.hangup();
         res.type("text/xml").send(twiml.toString());
       }
     });
   });
+});
+
+// 3. ENDPOINT PER FAR PARTIRE LA CHIAMATA
+app.get("/chiama", async (req, res) => {
+  const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+
+  try {
+    const call = await client.calls.create({
+      url: "https://" + req.headers.host + "/voce",
+      to: process.env.TWILIO_TO,
+      from: process.env.TWILIO_FROM
+    });
+
+    console.log("📞 Chiamata avviata:", call.sid);
+    res.send("✅ Chiamata avviata verso " + process.env.TWILIO_TO);
+  } catch (err) {
+    console.error("❌ Errore chiamata:", err.message);
+    res.status(500).send("Errore chiamata: " + err.message);
+  }
 });
 
 // Avvio server
