@@ -16,9 +16,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-const chatSessions = {}; // memoria RAM per CallSid
+const chatSessions = {}; // memoria in RAM per ogni CallSid
 
-// 1. INIZIO chiamata: saluto e ascolto
+// 1. Inizio chiamata → saluto + record
 app.post("/voce", (req, res) => {
   const response = new VoiceResponse();
   response.say({ voice: "alice", language: "it-IT" }, "Ciao! Sono Stella. Come stai oggi?");
@@ -32,7 +32,7 @@ app.post("/voce", (req, res) => {
   res.type("text/xml").send(response.toString());
 });
 
-// 2. INTERAZIONE AI (loop)
+// 2. Interazione AI → trascrizione + GPT + voce + nuovo ascolto
 app.post("/interazione", async (req, res) => {
   const callSid = req.body.CallSid;
   const recordingUrl = req.body.RecordingUrl + ".mp3";
@@ -46,82 +46,107 @@ app.post("/interazione", async (req, res) => {
     file.on("finish", () => {
       file.close();
 
-      // Converti da mp3 a wav (per Whisper)
-      ffmpeg(mp3Path)
-        .toFormat("wav")
-        .on("end", async () => {
-          try {
-            // 1. Trascrizione
-            const transcription = await openai.audio.transcriptions.create({
-              file: fs.createReadStream(wavPath),
-              model: "whisper-1"
-            });
+      // Attendi un attimo prima della conversione
+      setTimeout(() => {
+        if (!fs.existsSync(mp3Path)) {
+          console.error("❌ File MP3 non trovato:", mp3Path);
+          const twiml = new VoiceResponse();
+          twiml.say({ voice: "alice", language: "it-IT" }, "Errore. File audio non trovato.");
+          twiml.hangup();
+          return res.type("text/xml").send(twiml.toString());
+        }
 
-            const testo = transcription.text.trim();
-            console.log(`[${callSid}] 🗣️ Utente:`, testo);
+        const size = fs.statSync(mp3Path).size;
+        console.log(`📦 File MP3 scaricato: ${size} byte`);
 
-            // 2. Inizializza sessione se serve
-            if (!chatSessions[callSid]) {
-              chatSessions[callSid] = [
-                { role: "system", content: "Rispondi come Stella, assistente vocale gentile e premurosa di StarNet." }
-              ];
+        if (size < 1000) {
+          console.error("❌ File MP3 troppo piccolo o vuoto.");
+          const twiml = new VoiceResponse();
+          twiml.say({ voice: "alice", language: "it-IT" }, "Non ho sentito nulla. Riproviamo...");
+          twiml.record({
+            maxLength: 8,
+            action: "/interazione",
+            method: "POST",
+            playBeep: true,
+            trim: "trim-silence"
+          });
+          return res.type("text/xml").send(twiml.toString());
+        }
+
+        console.log("🎧 Avvio conversione ffmpeg da:", mp3Path);
+
+        ffmpeg(mp3Path)
+          .toFormat("wav")
+          .on("end", async () => {
+            try {
+              const transcription = await openai.audio.transcriptions.create({
+                file: fs.createReadStream(wavPath),
+                model: "whisper-1"
+              });
+
+              const testo = transcription.text.trim();
+              console.log(`[${callSid}] 🗣️ Utente:`, testo);
+
+              if (!chatSessions[callSid]) {
+                chatSessions[callSid] = [
+                  { role: "system", content: "Rispondi come Stella, l'assistente vocale gentile e premurosa di StarNet." }
+                ];
+              }
+
+              chatSessions[callSid].push({ role: "user", content: testo });
+
+              const chat = await openai.chat.completions.create({
+                model: "gpt-4",
+                messages: chatSessions[callSid]
+              });
+
+              const rispostaGPT = chat.choices[0].message.content;
+              chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
+
+              console.log(`[${callSid}] 🤖 Stella:`, rispostaGPT);
+
+              const audio = await openai.audio.speech.create({
+                model: "tts-1",
+                voice: "nova",
+                input: rispostaGPT
+              });
+
+              const buffer = Buffer.from(await audio.arrayBuffer());
+              fs.writeFileSync(rispostaPath, buffer);
+
+              const twiml = new VoiceResponse();
+              twiml.play(`https://${req.headers.host}/${callSid}_risposta.mp3`);
+              twiml.record({
+                maxLength: 8,
+                action: "/interazione",
+                method: "POST",
+                playBeep: true,
+                trim: "trim-silence"
+              });
+
+              res.type("text/xml").send(twiml.toString());
+            } catch (err) {
+              console.error("❌ Errore AI:", err.message);
+              const twiml = new VoiceResponse();
+              twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore tecnico. Alla prossima!");
+              twiml.hangup();
+              res.type("text/xml").send(twiml.toString());
             }
-            chatSessions[callSid].push({ role: "user", content: testo });
-
-            // 3. GPT
-            const chat = await openai.chat.completions.create({
-              model: "gpt-4",
-              messages: chatSessions[callSid]
-            });
-
-            const rispostaGPT = chat.choices[0].message.content;
-            chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
-
-            console.log(`[${callSid}] 🤖 Stella:`, rispostaGPT);
-
-            // 4. TTS
-            const audio = await openai.audio.speech.create({
-              model: "tts-1",
-              voice: "nova",
-              input: rispostaGPT
-            });
-
-            const buffer = Buffer.from(await audio.arrayBuffer());
-            fs.writeFileSync(rispostaPath, buffer);
-
-            // 5. Twilio: riproduce e registra di nuovo
+          })
+          .on("error", (err) => {
+            console.error("❌ Errore ffmpeg:", err.message);
             const twiml = new VoiceResponse();
-            twiml.play(`https://${req.headers.host}/${callSid}_risposta.mp3`);
-            twiml.record({
-              maxLength: 8,
-              action: "/interazione",
-              method: "POST",
-              playBeep: true,
-              trim: "trim-silence"
-            });
-
-            res.type("text/xml").send(twiml.toString());
-          } catch (err) {
-            console.error("❌ Errore AI:", err.message);
-            const twiml = new VoiceResponse();
-            twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore. A presto!");
+            twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore audio durante la conversione.");
             twiml.hangup();
             res.type("text/xml").send(twiml.toString());
-          }
-        })
-        .on("error", (err) => {
-          console.error("❌ Errore ffmpeg:", err.message);
-          const twiml = new VoiceResponse();
-          twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore audio.");
-          twiml.hangup();
-          res.type("text/xml").send(twiml.toString());
-        })
-        .save(wavPath);
+          })
+          .save(wavPath);
+      }, 300); // attesa per sicurezza
     });
   });
 });
 
-// 3. CHIAMA l’utente da browser
+// 3. Endpoint per far partire la chiamata
 app.get("/chiama", async (req, res) => {
   const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
@@ -140,7 +165,7 @@ app.get("/chiama", async (req, res) => {
   }
 });
 
-// Avvio server
+// Avvia il server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("🟢 Server attivo sulla porta", PORT);
