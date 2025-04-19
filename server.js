@@ -86,7 +86,7 @@ app.post("/interazione", async (req, res) => {
 
               if (!chatSessions[callSid]) {
                 chatSessions[callSid] = [
-                  { role: "system", content: "Rispondi come Stella, l'assistente vocale gentile e premurosa di StarNet." }
+                  { role: "system", content: "Rispondi in lingua italiana come Stella, l'assistente vocale gentile e premurosa di StarNet." }
                 ];
               }
 
@@ -101,7 +101,7 @@ app.post("/interazione", async (req, res) => {
               chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
 
               const audio = await openai.audio.speech.create({
-                model: "tts-1-hd",
+                model: "tts-1",
                 voice: "nova",
                 input: rispostaGPT
               });
@@ -175,7 +175,7 @@ app.post("/chat", upload.single("audio"), async (req, res) => {
         const chat = await openai.chat.completions.create({
           model: "gpt-4",
           messages: [
-            { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." },
+            { role: "system", content: "Rispondi in italiano come Stella, assistente vocale gentile e simpatica." },
             { role: "user", content: testoUtente }
           ]
         });
@@ -184,7 +184,7 @@ app.post("/chat", upload.single("audio"), async (req, res) => {
         const testoPulito = rispostaGPT.replace(/[^\w\s.,!?àèéìòù]/gi, "");
 
         const speech = await openai.audio.speech.create({
-          model: "tts-1-hd",
+          model: "tts-1",
           voice: "nova",
           input: testoPulito
         });
