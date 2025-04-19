@@ -1,71 +1,64 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <title>StarNet Demo Call</title>
+  <meta charset="UTF-8" />
+  <title>Stella - Assistente vocale</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+    button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+    audio { margin-top: 20px; }
+  </style>
 </head>
 <body>
-  <h1>🎙️ StarNet Demo Call</h1>
-  <button id="start">Inizia a parlare</button>
-  <button id="stop" disabled>Ferma</button>
-  <button id="send" disabled>Invia</button>
-  <p id="status">Pronto</p>
-  <audio id="audio" controls></audio>
+  <h1>🎙️ Parla con Stella</h1>
+  <button id="start">🎤 Inizia registrazione</button>
+  <button id="stop" disabled>🛑 Ferma</button>
+  <p id="status">Premi "Inizia" per parlare</p>
+  <audio id="responseAudio" controls></audio>
+
   <script>
     let mediaRecorder;
     let audioChunks = [];
 
-    const startBtn = document.getElementById('start');
-    const stopBtn = document.getElementById('stop');
-    const sendBtn = document.getElementById('send');
-    const status = document.getElementById('status');
-    const audioEl = document.getElementById('audio');
+    const startBtn = document.getElementById("start");
+    const stopBtn = document.getElementById("stop");
+    const statusText = document.getElementById("status");
+    const audioPlayer = document.getElementById("responseAudio");
 
     startBtn.onclick = async () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorder = new MediaRecorder(stream);
       audioChunks = [];
 
-      mediaRecorder.ondataavailable = event => {
-        audioChunks.push(event.data);
-      };
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+        const formData = new FormData();
+        formData.append("audio", audioBlob, "input.webm");
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunks, { type: 'audio/webm' });
-        audioEl.src = URL.createObjectURL(blob);
-        audioEl.load();
-        sendBtn.disabled = false;
+        statusText.textContent = "🧠 Elaborazione in corso...";
+
+        const response = await fetch("/chat", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+        audioPlayer.src = data.audio;
+        statusText.textContent = `✅ Stella dice: ${data.reply}`;
       };
 
       mediaRecorder.start();
-      status.textContent = "Registrazione in corso...";
+      statusText.textContent = "🎙️ Registrazione in corso...";
       startBtn.disabled = true;
       stopBtn.disabled = false;
     };
 
     stopBtn.onclick = () => {
       mediaRecorder.stop();
-      status.textContent = "Registrazione completata.";
       startBtn.disabled = false;
       stopBtn.disabled = true;
-    };
-
-    sendBtn.onclick = async () => {
-      status.textContent = "Invio in corso...";
-      const blob = new Blob(audioChunks, { type: 'audio/webm' });
-      const formData = new FormData();
-      formData.append('audio', blob, 'recording.webm');
-
-      const response = await fetch('/chat', {
-        method: 'POST',
-        body: formData
-      });
-
-      const data = await response.json();
-      status.textContent = "Risposta: " + data.reply;
-      audioEl.src = data.audio;
-      audioEl.load();
-      audioEl.play();
+      statusText.textContent = "🎧 Elaborazione...";
     };
   </script>
 </body>
