@@ -117,12 +117,15 @@ app.post("/interazione", async (req, res) => {
               const twiml = new VoiceResponse();
               twiml.play(`https://${req.headers.host}/${callSid}_risposta.mp3`);
               twiml.record({
-                maxLength: 8,
-                action: "/interazione",
-                method: "POST",
-                playBeep: true,
-                trim: "trim-silence"
-              });
+  maxLength: 15,
+  timeout: 5,
+  action: "/interazione",
+  method: "POST",
+  playBeep: true,
+  trim: "trim-silence",
+  finishOnKey: "#"
+});
+
 
               res.type("text/xml").send(twiml.toString());
             } catch (err) {
