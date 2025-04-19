@@ -2,6 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const https = require("https");
 const path = require("path");
+const multer = require("multer");
 const { OpenAI } = require("openai");
 const { twiml: { VoiceResponse } } = require("twilio");
 const twilio = require("twilio");
@@ -11,24 +12,22 @@ const ffmpegPath = require("ffmpeg-static");
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
-
-const uploadsDir = path.join(__dirname, "uploads");
-
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
-  console.log("📂 Cartella 'uploads/' creata");
-} else {
-  console.log("📁 Cartella 'uploads/' già esistente");
-}
-
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-const chatSessions = {}; // memoria per conversazione
+// 📁 Assicurati che la cartella "uploads/" esista
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+  console.log("📂 Cartella 'uploads/' creata");
+}
 
-// ✅ 1. Inizia chiamata → solo Stella parla
+// 🧠 Memoria delle conversazioni per chiamata
+const chatSessions = {};
+
+// ✅ 1. Inizio chiamata → solo Stella parla
 app.post("/voce", (req, res) => {
   const response = new VoiceResponse();
   response.say({ voice: "alice", language: "it-IT" }, "Ciao! Sono Stella. Come stai oggi?");
@@ -36,7 +35,7 @@ app.post("/voce", (req, res) => {
   res.type("text/xml").send(response.toString());
 });
 
-// ✅ 2. Nuovo endpoint → SOLO registrazione
+// ✅ 2. Secondo step: registrazione vocale
 app.post("/ascolta", (req, res) => {
   const response = new VoiceResponse();
   response.record({
@@ -51,7 +50,7 @@ app.post("/ascolta", (req, res) => {
   res.type("text/xml").send(response.toString());
 });
 
-// ✅ 3. Interazione vocale → Whisper + GPT + TTS
+// ✅ 3. Interazione AI vocale
 app.post("/interazione", async (req, res) => {
   const callSid = req.body.CallSid;
   const recordingUrl = req.body.RecordingUrl + ".mp3";
@@ -137,7 +136,7 @@ app.post("/interazione", async (req, res) => {
   });
 });
 
-// ✅ 4. Endpoint per avviare la chiamata
+// ✅ 4. Avvio chiamata da browser
 app.get("/chiama", async (req, res) => {
   const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
@@ -156,7 +155,7 @@ app.get("/chiama", async (req, res) => {
   }
 });
 
-const multer = require("multer");
+// ✅ 5. Web endpoint vocale
 const upload = multer({ dest: "uploads/" });
 
 app.post("/chat", upload.single("audio"), async (req, res) => {
@@ -202,7 +201,6 @@ app.post("/chat", upload.single("audio"), async (req, res) => {
     if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
   }
 });
-
 
 // ✅ Avvio server
 const PORT = process.env.PORT || 3000;
