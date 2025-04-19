@@ -4,63 +4,70 @@ const https = require("https");
 const path = require("path");
 const { OpenAI } = require("openai");
 const { twiml: { VoiceResponse } } = require("twilio");
-const twilio = require("twilio");
+require("dotenv").config();
 
 const app = express();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// 1. Stella parla e registra
+const chatSessions = {}; // 🧠 memoria in RAM per ogni CallSid
+
+// 1. INIZIO chiamata → saluta e ascolta
 app.post("/voce", (req, res) => {
   const response = new VoiceResponse();
-  response.say({ voice: "alice", language: "it-IT" }, "Ciao! Sono Stella di StarNet. Come stai oggi?");
+  response.say({ voice: "alice", language: "it-IT" }, "Ciao! Sono Stella. Come stai oggi?");
   response.record({
-    maxLength: 6,
-    action: "/risposta",
+    maxLength: 8,
+    action: "/interazione",
     method: "POST",
-    playBeep: true
+    playBeep: true,
+    trim: "trim-silence"
   });
-  response.say("Non ho ricevuto risposta. Alla prossima!");
-  response.hangup();
-  res.type("text/xml");
-  res.send(response.toString());
+  res.type("text/xml").send(response.toString());
 });
 
-// 2. Riceve l'audio e risponde con OpenAI
-app.post("/risposta", async (req, res) => {
+// 2. OGNI risposta dell’utente → AI elabora e riascolta
+app.post("/interazione", async (req, res) => {
+  const callSid = req.body.CallSid;
   const recordingUrl = req.body.RecordingUrl + ".mp3";
-  const audioPath = path.join(__dirname, "public", "registrazione.mp3");
-  const rispostaPath = path.join(__dirname, "public", "risposta.mp3");
-
-  console.log("📥 Ricevuto audio:", recordingUrl);
+  const audioPath = path.join(__dirname, "public", `${callSid}.mp3`);
+  const rispostaPath = path.join(__dirname, "public", `${callSid}_risposta.mp3`);
 
   const file = fs.createWriteStream(audioPath);
   https.get(recordingUrl, (response) => {
     response.pipe(file);
     file.on("finish", async () => {
       file.close();
-
       try {
-        // Whisper
+        // Trascrivi
         const transcription = await openai.audio.transcriptions.create({
           file: fs.createReadStream(audioPath),
           model: "whisper-1"
         });
-        const testo = transcription.text;
-        console.log("📝 Trascritto:", testo);
+
+        const testo = transcription.text.trim();
+        console.log(`[${callSid}] 🗣️ Utente:`, testo);
+
+        // Crea o aggiorna la sessione
+        if (!chatSessions[callSid]) {
+          chatSessions[callSid] = [
+            { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." }
+          ];
+        }
+
+        chatSessions[callSid].push({ role: "user", content: testo });
 
         // GPT
         const chat = await openai.chat.completions.create({
           model: "gpt-4",
-          messages: [
-            { role: "system", content: "Rispondi come Stella, l'assistente vocale gentile di StarNet." },
-            { role: "user", content: testo }
-          ]
+          messages: chatSessions[callSid]
         });
+
         const rispostaGPT = chat.choices[0].message.content;
-        console.log("🤖 GPT risponde:", rispostaGPT);
+        chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
+
+        console.log(`[${callSid}] 🤖 Stella:`, rispostaGPT);
 
         // TTS
         const audio = await openai.audio.speech.create({
@@ -68,44 +75,31 @@ app.post("/risposta", async (req, res) => {
           voice: "nova",
           input: rispostaGPT
         });
+
         const buffer = Buffer.from(await audio.arrayBuffer());
         fs.writeFileSync(rispostaPath, buffer);
-        console.log("🔊 Audio generato:", rispostaPath);
 
-        // Riproduce la risposta
-        const response = new VoiceResponse();
-        response.play("https://" + req.headers.host + "/risposta.mp3");
-        response.hangup();
+        // Risposta Twilio + nuovo record (loop)
+        const twiml = new VoiceResponse();
+        twiml.play(`https://${req.headers.host}/${callSid}_risposta.mp3`);
+        twiml.record({
+          maxLength: 8,
+          action: "/interazione",
+          method: "POST",
+          playBeep: true,
+          trim: "trim-silence"
+        });
 
-        res.type("text/xml").send(response.toString());
+        res.type("text/xml").send(twiml.toString());
       } catch (err) {
-        console.error("❌ Errore AI:", err.message);
-        res.status(500).send("Errore AI");
+        console.error("❌ Errore:", err.message);
+        const twiml = new VoiceResponse();
+        twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore. A presto!");
+        twiml.hangup();
+        res.type("text/xml").send(twiml.toString());
       }
     });
-  }).on("error", (err) => {
-    console.error("❌ Errore download:", err.message);
-    res.status(500).send("Errore audio");
   });
-});
-
-// 3. Avvia la chiamata da browser
-app.get("/chiama", async (req, res) => {
-  const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-
-  try {
-    const call = await client.calls.create({
-      url: "https://" + req.headers.host + "/voce",
-      to: process.env.TWILIO_TO,
-      from: process.env.TWILIO_FROM
-    });
-
-    console.log("📞 Chiamata avviata:", call.sid);
-    res.send("📞 Chiamata in partenza verso " + process.env.TWILIO_TO);
-  } catch (err) {
-    console.error("❌ Errore Twilio:", err.message);
-    res.status(500).send("Errore chiamata: " + err.message);
-  }
 });
 
 // Avvio server
