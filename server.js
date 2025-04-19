@@ -17,17 +17,16 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// 📁 Assicurati che la cartella "uploads/" esista
+// 📁 Verifica che "uploads/" esista
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
   console.log("📂 Cartella 'uploads/' creata");
 }
 
-// 🧠 Memoria delle conversazioni per chiamata
-const chatSessions = {};
+const chatSessions = {}; // 🧠 memoria in RAM per CallSid
 
-// ✅ 1. Inizio chiamata → solo Stella parla
+// ✅ 1. Twilio → Stella parla
 app.post("/voce", (req, res) => {
   const response = new VoiceResponse();
   response.say({ voice: "alice", language: "it-IT" }, "Ciao! Sono Stella. Come stai oggi?");
@@ -35,7 +34,7 @@ app.post("/voce", (req, res) => {
   res.type("text/xml").send(response.toString());
 });
 
-// ✅ 2. Secondo step: registrazione vocale
+// ✅ 2. Twilio → Registrazione risposta
 app.post("/ascolta", (req, res) => {
   const response = new VoiceResponse();
   response.record({
@@ -50,7 +49,7 @@ app.post("/ascolta", (req, res) => {
   res.type("text/xml").send(response.toString());
 });
 
-// ✅ 3. Interazione AI vocale
+// ✅ 3. Twilio → Interazione AI
 app.post("/interazione", async (req, res) => {
   const callSid = req.body.CallSid;
   const recordingUrl = req.body.RecordingUrl + ".mp3";
@@ -93,18 +92,12 @@ app.post("/interazione", async (req, res) => {
 
               chatSessions[callSid].push({ role: "user", content: testo });
 
-const chat = await openai.chat.completions.create({
-  model: "gpt-4",
-  messages: [
-    { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." },
-    { role: "user", content: testoUtente }
-  ]
-});
+              const chat = await openai.chat.completions.create({
+                model: "gpt-4",
+                messages: chatSessions[callSid]
+              });
 
-console.log("🧠 Risposta grezza da GPT:", JSON.stringify(chat, null, 2));
-
-const rispostaGPT = chat.choices?.[0]?.message?.content || "Non sono riuscita a rispondere.";
-
+              const rispostaGPT = chat.choices[0]?.message?.content || "Non sono riuscita a rispondere.";
               chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
 
               const audio = await openai.audio.speech.create({
@@ -142,7 +135,7 @@ const rispostaGPT = chat.choices?.[0]?.message?.content || "Non sono riuscita a 
   });
 });
 
-// ✅ 4. Avvio chiamata da browser
+// ✅ 4. Avvia chiamata da browser
 app.get("/chiama", async (req, res) => {
   const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
@@ -161,51 +154,62 @@ app.get("/chiama", async (req, res) => {
   }
 });
 
-// ✅ 5. Web endpoint vocale
+// ✅ 5. Interazione vocale via Web (browser)
 const upload = multer({ dest: "uploads/" });
 
 app.post("/chat", upload.single("audio"), async (req, res) => {
-  const audioPath = req.file.path;
+  const originalPath = req.file.path;
+  const convertedPath = originalPath + ".wav";
 
-  try {
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model: "whisper-1"
-    });
+  ffmpeg(originalPath)
+    .toFormat("wav")
+    .on("end", async () => {
+      try {
+        const transcription = await openai.audio.transcriptions.create({
+          file: fs.createReadStream(convertedPath),
+          model: "whisper-1"
+        });
 
-    const testoUtente = transcription.text;
+        const testoUtente = transcription.text;
 
-    const chat = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." },
-        { role: "user", content: testoUtente }
-      ]
-    });
+        const chat = await openai.chat.completions.create({
+          model: "gpt-4",
+          messages: [
+            { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." },
+            { role: "user", content: testoUtente }
+          ]
+        });
 
-    const rispostaGPT = chat.choices[0].message.content;
+        const rispostaGPT = chat.choices[0]?.message?.content || "Non sono riuscita a rispondere.";
 
-    const speech = await openai.audio.speech.create({
-      model: "tts-1",
-      voice: "nova",
-      input: rispostaGPT
-    });
+        const speech = await openai.audio.speech.create({
+          model: "tts-1",
+          voice: "nova",
+          input: rispostaGPT
+        });
 
-    const outputPath = path.join("public", "response.mp3");
-    const buffer = Buffer.from(await speech.arrayBuffer());
-    fs.writeFileSync(outputPath, buffer);
+        const outputPath = path.join("public", "response.mp3");
+        const buffer = Buffer.from(await speech.arrayBuffer());
+        fs.writeFileSync(outputPath, buffer);
 
-    res.json({
-      transcription: testoUtente,
-      reply: rispostaGPT,
-      audio: "/response.mp3"
-    });
-  } catch (err) {
-    console.error("❌ Errore /chat:", err.message);
-    res.status(500).json({ error: "Errore durante la risposta vocale" });
-  } finally {
-    if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-  }
+        res.json({
+          transcription: testoUtente,
+          reply: rispostaGPT,
+          audio: "/response.mp3"
+        });
+      } catch (err) {
+        console.error("❌ Errore /chat:", err.message);
+        res.status(500).json({ error: "Errore durante la risposta vocale" });
+      } finally {
+        if (fs.existsSync(originalPath)) fs.unlinkSync(originalPath);
+        if (fs.existsSync(convertedPath)) fs.unlinkSync(convertedPath);
+      }
+    })
+    .on("error", (err) => {
+      console.error("❌ Errore nella conversione audio:", err.message);
+      res.status(500).json({ error: "Errore nella conversione audio" });
+    })
+    .save(convertedPath);
 });
 
 // ✅ Avvio server
