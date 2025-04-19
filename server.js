@@ -5,34 +5,42 @@ const path = require("path");
 const { OpenAI } = require("openai");
 const { twiml: { VoiceResponse } } = require("twilio");
 const twilio = require("twilio");
-
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
+
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-const chatSessions = {}; // memoria in RAM per ogni CallSid
+const chatSessions = {}; // memoria per conversazione
 
-// 1. Inizio chiamata → saluto + record
+// ✅ 1. Inizia chiamata → solo Stella parla
 app.post("/voce", (req, res) => {
   const response = new VoiceResponse();
   response.say({ voice: "alice", language: "it-IT" }, "Ciao! Sono Stella. Come stai oggi?");
+  response.redirect("/ascolta");
+  res.type("text/xml").send(response.toString());
+});
+
+// ✅ 2. Nuovo endpoint → SOLO registrazione
+app.post("/ascolta", (req, res) => {
+  const response = new VoiceResponse();
   response.record({
-    maxLength: 8,
+    maxLength: 15,
+    timeout: 5,
     action: "/interazione",
     method: "POST",
     playBeep: true,
-    trim: "trim-silence"
+    trim: "trim-silence",
+    finishOnKey: "#"
   });
   res.type("text/xml").send(response.toString());
 });
 
-// 2. Interazione AI → trascrizione + GPT + voce + nuovo ascolto
+// ✅ 3. Interazione vocale → Whisper + GPT + TTS
 app.post("/interazione", async (req, res) => {
   const callSid = req.body.CallSid;
   const recordingUrl = req.body.RecordingUrl + ".mp3";
@@ -46,34 +54,14 @@ app.post("/interazione", async (req, res) => {
     file.on("finish", () => {
       file.close();
 
-      // Attendi un attimo prima della conversione
       setTimeout(() => {
-        if (!fs.existsSync(mp3Path)) {
-          console.error("❌ File MP3 non trovato:", mp3Path);
-          const twiml = new VoiceResponse();
-          twiml.say({ voice: "alice", language: "it-IT" }, "Errore. File audio non trovato.");
-          twiml.hangup();
-          return res.type("text/xml").send(twiml.toString());
-        }
-
-        const size = fs.statSync(mp3Path).size;
-        console.log(`📦 File MP3 scaricato: ${size} byte`);
-
+        const size = fs.existsSync(mp3Path) ? fs.statSync(mp3Path).size : 0;
         if (size < 1000) {
-          console.error("❌ File MP3 troppo piccolo o vuoto.");
           const twiml = new VoiceResponse();
-          twiml.say({ voice: "alice", language: "it-IT" }, "Non ho sentito nulla. Riproviamo...");
-          twiml.record({
-            maxLength: 8,
-            action: "/interazione",
-            method: "POST",
-            playBeep: true,
-            trim: "trim-silence"
-          });
+          twiml.say({ voice: "alice", language: "it-IT" }, "Non ho sentito nulla. Riproviamo.");
+          twiml.redirect("/ascolta");
           return res.type("text/xml").send(twiml.toString());
         }
-
-        console.log("🎧 Avvio conversione ffmpeg da:", mp3Path);
 
         ffmpeg(mp3Path)
           .toFormat("wav")
@@ -103,8 +91,6 @@ app.post("/interazione", async (req, res) => {
               const rispostaGPT = chat.choices[0].message.content;
               chatSessions[callSid].push({ role: "assistant", content: rispostaGPT });
 
-              console.log(`[${callSid}] 🤖 Stella:`, rispostaGPT);
-
               const audio = await openai.audio.speech.create({
                 model: "tts-1",
                 voice: "nova",
@@ -116,22 +102,13 @@ app.post("/interazione", async (req, res) => {
 
               const twiml = new VoiceResponse();
               twiml.play(`https://${req.headers.host}/${callSid}_risposta.mp3`);
-              twiml.record({
-  maxLength: 15,
-  timeout: 5,
-  action: "/interazione",
-  method: "POST",
-  playBeep: true,
-  trim: "trim-silence",
-  finishOnKey: "#"
-});
-
+              twiml.redirect("/ascolta");
 
               res.type("text/xml").send(twiml.toString());
             } catch (err) {
               console.error("❌ Errore AI:", err.message);
               const twiml = new VoiceResponse();
-              twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore tecnico. Alla prossima!");
+              twiml.say({ voice: "alice", language: "it-IT" }, "Errore durante la risposta. Alla prossima!");
               twiml.hangup();
               res.type("text/xml").send(twiml.toString());
             }
@@ -139,17 +116,17 @@ app.post("/interazione", async (req, res) => {
           .on("error", (err) => {
             console.error("❌ Errore ffmpeg:", err.message);
             const twiml = new VoiceResponse();
-            twiml.say({ voice: "alice", language: "it-IT" }, "C'è stato un errore audio durante la conversione.");
+            twiml.say({ voice: "alice", language: "it-IT" }, "Errore nella conversione audio.");
             twiml.hangup();
             res.type("text/xml").send(twiml.toString());
           })
           .save(wavPath);
-      }, 300); // attesa per sicurezza
+      }, 300);
     });
   });
 });
 
-// 3. Endpoint per far partire la chiamata
+// ✅ 4. Endpoint per avviare la chiamata
 app.get("/chiama", async (req, res) => {
   const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
@@ -168,7 +145,7 @@ app.get("/chiama", async (req, res) => {
   }
 });
 
-// Avvia il server
+// ✅ Avvio server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("🟢 Server attivo sulla porta", PORT);
