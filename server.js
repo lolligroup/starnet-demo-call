@@ -4,7 +4,6 @@ const https = require("https");
 const path = require("path");
 const { OpenAI } = require("openai");
 const { twiml: { VoiceResponse } } = require("twilio");
-require("dotenv").config();
 
 const app = express();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
