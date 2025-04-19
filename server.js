@@ -145,6 +145,54 @@ app.get("/chiama", async (req, res) => {
   }
 });
 
+const multer = require("multer");
+const upload = multer({ dest: "uploads/" });
+
+app.post("/chat", upload.single("audio"), async (req, res) => {
+  const audioPath = req.file.path;
+
+  try {
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(audioPath),
+      model: "whisper-1"
+    });
+
+    const testoUtente = transcription.text;
+
+    const chat = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: "Rispondi come Stella, assistente vocale gentile e simpatica." },
+        { role: "user", content: testoUtente }
+      ]
+    });
+
+    const rispostaGPT = chat.choices[0].message.content;
+
+    const speech = await openai.audio.speech.create({
+      model: "tts-1",
+      voice: "nova",
+      input: rispostaGPT
+    });
+
+    const outputPath = path.join("public", "response.mp3");
+    const buffer = Buffer.from(await speech.arrayBuffer());
+    fs.writeFileSync(outputPath, buffer);
+
+    res.json({
+      transcription: testoUtente,
+      reply: rispostaGPT,
+      audio: "/response.mp3"
+    });
+  } catch (err) {
+    console.error("❌ Errore /chat:", err.message);
+    res.status(500).json({ error: "Errore durante la risposta vocale" });
+  } finally {
+    if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+  }
+});
+
+
 // ✅ Avvio server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
