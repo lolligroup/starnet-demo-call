@@ -190,15 +190,19 @@ const speech = await openai.audio.speech.create({
 });
 
 
-        const outputPath = path.join("public", "response.mp3");
-        const buffer = Buffer.from(await speech.arrayBuffer());
-        fs.writeFileSync(outputPath, buffer);
+const uniqueId = Date.now();
+const fileName = `response_${uniqueId}.mp3`;
+const outputPath = path.join("public", fileName);
+fs.writeFileSync(outputPath, buffer);
 
-        res.json({
-          transcription: testoUtente,
-          reply: rispostaGPT,
-          audio: "/response.mp3"
-        });
+res.json({
+  transcription: testoUtente,
+  reply: rispostaGPT,
+  audio: `/${fileName}`
+});
+
+
+        
       } catch (err) {
         console.error("❌ Errore /chat:", err.message);
         res.status(500).json({ error: "Errore durante la risposta vocale" });
