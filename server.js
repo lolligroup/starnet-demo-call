@@ -181,28 +181,27 @@ app.post("/chat", upload.single("audio"), async (req, res) => {
         });
 
         const rispostaGPT = chat.choices[0]?.message?.content || "Non sono riuscita a rispondere.";
-const testoPulito = rispostaGPT.replace(/[^\w\s.,!?àèéìòù]/gi, "");
+        const testoPulito = rispostaGPT.replace(/[^\w\s.,!?àèéìòù]/gi, "");
 
-const speech = await openai.audio.speech.create({
-  model: "tts-1-hd",
-  voice: "nova",
-  input: testoPulito
-});
+        const speech = await openai.audio.speech.create({
+          model: "tts-1-hd",
+          voice: "nova",
+          input: testoPulito
+        });
 
+        const buffer = Buffer.from(await speech.arrayBuffer());
 
-const uniqueId = Date.now();
-const fileName = `response_${uniqueId}.mp3`;
-const outputPath = path.join("public", fileName);
-fs.writeFileSync(outputPath, buffer);
+        const uniqueId = Date.now();
+        const fileName = `response_${uniqueId}.mp3`;
+        const outputPath = path.join("public", fileName);
+        fs.writeFileSync(outputPath, buffer);
 
-res.json({
-  transcription: testoUtente,
-  reply: rispostaGPT,
-  audio: `/${fileName}`
-});
+        res.json({
+          transcription: testoUtente,
+          reply: rispostaGPT,
+          audio: `/${fileName}`
+        });
 
-
-        
       } catch (err) {
         console.error("❌ Errore /chat:", err.message);
         res.status(500).json({ error: "Errore durante la risposta vocale" });
@@ -217,6 +216,7 @@ res.json({
     })
     .save(convertedPath);
 });
+
 
 // ✅ Avvio server
 const PORT = process.env.PORT || 3000;
