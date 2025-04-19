@@ -2,23 +2,24 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8" />
-  <title>Stella - Assistente vocale</title>
+  <title>Stella - Assistente Vocale</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
-    button { padding: 10px 20px; margin: 10px; font-size: 16px; }
-    audio { margin-top: 20px; }
+    body { font-family: sans-serif; text-align: center; margin-top: 60px; }
+    button { font-size: 18px; padding: 10px 20px; margin: 10px; }
+    p { font-size: 16px; margin-top: 20px; }
+    audio { margin-top: 30px; width: 80%; }
   </style>
 </head>
 <body>
-  <h1>🎙️ Parla con Stella</h1>
-  <button id="start">🎤 Inizia registrazione</button>
+  <h1>🗣️ Parla con Stella</h1>
+  <button id="start">🎙️ Inizia a parlare</button>
   <button id="stop" disabled>🛑 Ferma</button>
-  <p id="status">Premi "Inizia" per parlare</p>
+  <p id="status">Premi “Inizia” per parlare con Stella</p>
   <audio id="responseAudio" controls></audio>
 
   <script>
     let mediaRecorder;
-    let audioChunks = [];
+    let chunks = [];
 
     const startBtn = document.getElementById("start");
     const stopBtn = document.getElementById("stop");
@@ -28,15 +29,16 @@
     startBtn.onclick = async () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorder = new MediaRecorder(stream);
-      audioChunks = [];
+      chunks = [];
 
-      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+        const audioBlob = new Blob(chunks, { type: "audio/webm" });
         const formData = new FormData();
-        formData.append("audio", audioBlob, "input.webm");
+        formData.append("audio", audioBlob, "voce.webm");
 
-        statusText.textContent = "🧠 Elaborazione in corso...";
+        statusText.textContent = "🧠 Stella sta pensando...";
 
         const response = await fetch("/chat", {
           method: "POST",
@@ -44,8 +46,9 @@
         });
 
         const data = await response.json();
-        audioPlayer.src = data.audio;
         statusText.textContent = `✅ Stella dice: ${data.reply}`;
+        audioPlayer.src = data.audio;
+        audioPlayer.play();
       };
 
       mediaRecorder.start();
@@ -58,7 +61,7 @@
       mediaRecorder.stop();
       startBtn.disabled = false;
       stopBtn.disabled = true;
-      statusText.textContent = "🎧 Elaborazione...";
+      statusText.textContent = "🔄 Attendi risposta...";
     };
   </script>
 </body>
