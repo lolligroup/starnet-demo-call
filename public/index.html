@@ -34,7 +34,7 @@
       mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(chunks, { type: "audio/webm" });
+const audioBlob = new Blob(chunks, { type: "audio/webm;codecs=opus" });
         const formData = new FormData();
         formData.append("audio", audioBlob, "voce.webm");
 
